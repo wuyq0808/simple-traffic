@@ -161,8 +161,8 @@ jobs:
         
         chmod +x /opt/traffic/cleanup-logs.sh
 
-        # Configure NODE_EXTRA_CA_CERTS
-        echo "export NODE_EXTRA_CA_CERTS=/opt/traffic/certs/mitmproxy-ca-cert.pem" >> /etc/profile
+        # Configure NODE_EXTRA_CA_CERTS for Node.js applications
+        echo "NODE_EXTRA_CA_CERTS=/opt/traffic/certs/mitmproxy-ca-cert.pem" >> /etc/environment
         
         echo "Traffic VM setup completed successfully"
         
