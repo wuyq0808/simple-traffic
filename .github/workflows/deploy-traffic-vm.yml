@@ -181,25 +181,32 @@ jobs:
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-standard-2' }}"
         
-        # Check if VM exists
-        if gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} &>/dev/null; then
-          echo "VM $VM_NAME already exists. Stopping and updating..."
-          gcloud compute instances stop $VM_NAME --zone=${{ env.ZONE }} --quiet || true
-          sleep 10
-          gcloud compute instances start $VM_NAME --zone=${{ env.ZONE }} --quiet
-        else
-          echo "Creating new Traffic VM: $VM_NAME"
-          gcloud compute instances create $VM_NAME \
-            --zone=${{ env.ZONE }} \
-            --machine-type=$MACHINE_TYPE \
-            --image-family=ubuntu-2204-lts \
-            --image-project=ubuntu-os-cloud \
-            --boot-disk-size=50GB \
-            --boot-disk-type=pd-standard \
-            --tags=traffic-vm,http-server,https-server \
-            --metadata-from-file startup-script=startup-script.sh \
-            --scopes=https://www.googleapis.com/auth/cloud-platform
+        # Always delete existing instance if it exists
+        if gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; then
+          echo "Deleting existing instance"
+          gcloud compute instances delete $VM_NAME --zone=${{ env.ZONE }} --quiet
+          
+          # Wait for deletion to complete
+          echo "Waiting for deletion to complete..."
+          while gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; do
+            echo "Still deleting..."
+            sleep 5
+          done
+          echo "Instance deleted successfully"
         fi
+        
+        # Create new instance
+        echo "Creating new Traffic VM: $VM_NAME"
+        gcloud compute instances create $VM_NAME \
+          --zone=${{ env.ZONE }} \
+          --machine-type=$MACHINE_TYPE \
+          --image-family=ubuntu-2204-lts \
+          --image-project=ubuntu-os-cloud \
+          --boot-disk-size=50GB \
+          --boot-disk-type=pd-standard \
+          --tags=traffic-vm,http-server,https-server \
+          --metadata-from-file startup-script=startup-script.sh \
+          --scopes=https://www.googleapis.com/auth/cloud-platform
 
     - name: Create firewall rules
       run: |
