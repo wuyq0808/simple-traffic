@@ -184,7 +184,7 @@ jobs:
         # Always delete existing instance if it exists
         if gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; then
           echo "Deleting existing instance"
-          gcloud compute instances delete $VM_NAME --zone=${{ env.ZONE }} --quiet
+          gcloud compute instances delete $VM_NAME --zone=${{ env.ZONE }} --quiet || echo "Delete failed, instance may already be gone"
           
           # Wait for deletion to complete
           echo "Waiting for deletion to complete..."
@@ -193,6 +193,8 @@ jobs:
             sleep 5
           done
           echo "Instance deleted successfully"
+        else
+          echo "No existing instance found, proceeding with creation"
         fi
         
         # Create new instance
