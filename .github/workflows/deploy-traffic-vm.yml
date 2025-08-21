@@ -71,8 +71,23 @@ jobs:
         # Generate traffic proxy certificates
         sudo -u traffic mitmproxy --set confdir=/opt/traffic/certs &
         TRAFFIC_PID=$!
-        sleep 5
-        kill $TRAFFIC_PID || true
+
+        # Wait for certificates to be generated (max 10 minutes)
+        for i in {1..60}; do
+            if [ -f "/opt/traffic/certs/mitmproxy-ca-cert.pem" ]; then
+                echo "Certificates generated successfully"
+                kill $TRAFFIC_PID || true
+                break
+            fi
+            echo "Waiting for certificates... ($i/60)"
+            sleep 10
+        done
+
+        # Check if we timed out
+        if [ ! -f "/opt/traffic/certs/mitmproxy-ca-cert.pem" ]; then
+            echo "Error: Certificate generation timed out after 10 minutes"
+            exit 1
+        fi
 
         # Install traffic CA certificate to system trust store
         cp /opt/traffic/certs/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca-cert.crt
@@ -176,7 +191,7 @@ jobs:
 
         chmod +x startup-script.sh
 
-    - name: Create or Update Traffic VM
+    - name: Delete and Recreate Traffic VM
       run: |
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-micro' }}"
