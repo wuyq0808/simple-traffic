@@ -149,7 +149,8 @@ jobs:
       run: |
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         
-        # Copy all traffic files to VM
+        # Create destination directory and copy all traffic files to VM
+        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="mkdir -p /tmp/vm-scripts"
         gcloud compute scp --zone=${{ env.ZONE }} --recurse ./vm-scripts/ $VM_NAME:/tmp/vm-scripts/
         
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
