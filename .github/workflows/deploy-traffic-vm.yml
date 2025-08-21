@@ -14,7 +14,7 @@ on:
       machine_type:
         description: 'Machine type for the VM'
         required: false
-        default: 'e2-standard-2'
+        default: 'g1-small'
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -179,7 +179,7 @@ jobs:
     - name: Create or Update Traffic VM
       run: |
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
-        MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-standard-2' }}"
+        MACHINE_TYPE="${{ github.event.inputs.machine_type || 'g1-small' }}"
         
         # Always delete existing instance if it exists
         if gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; then
