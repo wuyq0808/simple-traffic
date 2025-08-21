@@ -259,12 +259,12 @@ jobs:
           --target-tags traffic-vm \
           --description "Allow SSH to Traffic VM" || echo "Firewall rule already exists"
         
-        # Allow HTTP/HTTPS for testing
+        # Allow HTTP/HTTPS for testing and Go service
         gcloud compute firewall-rules create allow-http-https-traffic \
-          --allow tcp:80,tcp:443,tcp:8080 \
+          --allow tcp:80,tcp:443,tcp:8080,tcp:8081 \
           --source-ranges 0.0.0.0/0 \
           --target-tags traffic-vm \
-          --description "Allow HTTP/HTTPS to Traffic VM" || echo "Firewall rule already exists"
+          --description "Allow HTTP/HTTPS and Go service to Traffic VM" || echo "Firewall rule already exists"
 
     - name: Deploy Container to Traffic VM
       run: |-
