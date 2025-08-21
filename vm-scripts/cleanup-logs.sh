@@ -1,5 +1,6 @@
 #!/bin/bash
 echo "Clearing traffic logs..."
-sudo -u traffic rm -f /opt/traffic/logs/traffic.jsonl
-sudo -u traffic touch /opt/traffic/logs/traffic.jsonl
+sudo rm -f /tmp/traffic.jsonl
+sudo touch /tmp/traffic.jsonl
+sudo chmod 666 /tmp/traffic.jsonl
 echo "Traffic logs cleared"

@@ -12,7 +12,7 @@ def request(flow: http.HTTPFlow) -> None:
         "content": flow.request.content.decode('utf-8', errors='ignore') if flow.request.content else ""
     }
     
-    with open("/opt/traffic/logs/traffic.jsonl", "a") as f:
+    with open("/tmp/traffic.jsonl", "a") as f:
         f.write(json.dumps(log_entry) + "\n")
 
 def response(flow: http.HTTPFlow) -> None:
@@ -25,5 +25,5 @@ def response(flow: http.HTTPFlow) -> None:
         "content": flow.response.content.decode('utf-8', errors='ignore') if flow.response.content else ""
     }
     
-    with open("/opt/traffic/logs/traffic.jsonl", "a") as f:
+    with open("/tmp/traffic.jsonl", "a") as f:
         f.write(json.dumps(log_entry) + "\n")

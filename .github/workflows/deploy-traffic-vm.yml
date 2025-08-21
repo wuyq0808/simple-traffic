@@ -154,9 +154,8 @@ jobs:
           sudo useradd -m -s /bin/bash traffic || echo 'User already exists'
           
           # Create directories
-          sudo mkdir -p /opt/traffic/{logs,certs}
+          sudo mkdir -p /opt/traffic/certs
           sudo chown -R traffic:traffic /opt/traffic
-          sudo chmod 755 /opt/traffic/logs
           
           # List what was actually copied
           echo 'Files copied to /tmp/vm-scripts:'
@@ -192,7 +191,7 @@ jobs:
           
           # Start traffic proxy in background
           echo 'Starting traffic proxy...'
-          nohup sudo /opt/traffic/start-proxy.sh > /opt/traffic/logs/startup.log 2>&1 &
+          nohup sudo /opt/traffic/start-proxy.sh > /tmp/traffic-startup.log 2>&1 &
           
           # Wait for proxy to start with retry loop
           echo 'Waiting for traffic proxy to start...'
