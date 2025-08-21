@@ -114,9 +114,6 @@ jobs:
       run: |
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         
-        # Wait for VM to be ready
-        sleep 30
-        
         # Install all dependencies
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
           # Update system
@@ -154,6 +151,17 @@ jobs:
         gcloud compute scp --zone=${{ env.ZONE }} --recurse ./vm-scripts/ $VM_NAME:/tmp/vm-scripts/
         
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
+          # Create traffic user first
+          sudo useradd -m -s /bin/bash traffic || echo 'User already exists'
+          
+          # Create directories
+          sudo mkdir -p /opt/traffic/{logs,certs}
+          sudo chown -R traffic:traffic /opt/traffic
+          
+          # List what was actually copied
+          echo 'Files copied to /tmp/vm-scripts:'
+          ls -la /tmp/vm-scripts/ || echo 'Directory not found'
+          
           # Move traffic script
           sudo mv /tmp/vm-scripts/traffic_script.py /opt/traffic/traffic_script.py
           sudo chown traffic:traffic /opt/traffic/traffic_script.py
@@ -178,13 +186,6 @@ jobs:
         # Configure environment and start traffic proxy
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
           set -e  # Exit on any error
-          
-          # Create traffic user
-          sudo useradd -m -s /bin/bash traffic || echo 'User already exists'
-          
-          # Create directories for logs and certificates
-          sudo mkdir -p /opt/traffic/{logs,certs}
-          sudo chown -R traffic:traffic /opt/traffic
           
           # Configure NODE_EXTRA_CA_CERTS for Node.js applications
           echo 'NODE_EXTRA_CA_CERTS=/opt/traffic/certs/mitmproxy-ca-cert.pem' | sudo tee -a /etc/environment
