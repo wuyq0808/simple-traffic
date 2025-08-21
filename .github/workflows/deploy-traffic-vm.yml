@@ -141,6 +141,39 @@ jobs:
           sudo ln -sf \$NPM_GLOBAL_BIN/claude /usr/local/bin/claude
         "
 
+    - name: Deploy Container to Traffic VM
+      run: |-
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
+        
+        # Deploy container to the traffic VM BEFORE setting up proxy
+        echo "Deploying Go service container to $VM_NAME"
+        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
+          set -e  # Exit on any error
+          
+          # Authenticate with service account for Docker
+          echo 'Configuring Docker authentication...'
+          
+          # Activate service account on VM
+          gcloud auth activate-service-account --key-file=<(echo '${{ secrets.GCP_SA_KEY }}')
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+          
+          # Pull and run new container
+          echo 'Pulling container image...'
+          sudo docker pull ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
+          
+          echo 'Starting container...'
+          sudo docker run -d --name simple-traffic --restart=always -p 8081:8080 \
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
+          
+          # Verify container is running
+          if sudo docker ps | grep -q simple-traffic; then
+            echo 'Container deployed and running successfully'
+          else
+            echo 'Error: Container failed to start'
+            sudo docker logs simple-traffic || true
+            exit 1
+          fi
+        "
 
     - name: Setup Traffic Scripts and Rules
       run: |
@@ -233,62 +266,28 @@ jobs:
           fi
         "
 
-
-
     - name: Create firewall rules
       run: |
+        # Delete existing firewall rules if they exist
+        echo "Cleaning up existing firewall rules..."
+        gcloud compute firewall-rules delete allow-ssh-traffic --quiet 2>/dev/null || echo "SSH rule doesn't exist"
+        gcloud compute firewall-rules delete allow-http-https-traffic --quiet 2>/dev/null || echo "HTTP/HTTPS rule doesn't exist"
+        
         # Allow SSH access
+        echo "Creating SSH firewall rule..."
         gcloud compute firewall-rules create allow-ssh-traffic \
           --allow tcp:22 \
           --source-ranges 0.0.0.0/0 \
           --target-tags traffic-vm \
-          --description "Allow SSH to Traffic VM" || echo "Firewall rule already exists"
+          --description "Allow SSH to Traffic VM"
         
         # Allow HTTP/HTTPS for testing and Go service
+        echo "Creating HTTP/HTTPS firewall rule..."
         gcloud compute firewall-rules create allow-http-https-traffic \
           --allow tcp:80,tcp:443,tcp:8080,tcp:8081 \
           --source-ranges 0.0.0.0/0 \
           --target-tags traffic-vm \
-          --description "Allow HTTP/HTTPS and Go service to Traffic VM" || echo "Firewall rule already exists"
-
-    - name: Deploy Container to Traffic VM
-      run: |-
-        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
-        
-        # Wait for VM to be fully ready
-        echo "Waiting for VM to be ready..."
-        sleep 30
-        
-        # Deploy container to the traffic VM
-        echo "Deploying Go service container to $VM_NAME"
-        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
-          set -e  # Exit on any error
-          
-          # Authenticate with service account for Docker
-          echo 'Configuring Docker authentication...'
-          
-          # Activate service account on VM
-          gcloud auth activate-service-account --key-file=<(echo '${{ secrets.GCP_SA_KEY }}')
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-          
-          # Pull and run new container
-          echo 'Pulling container image...'
-          sudo docker pull ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
-          
-          echo 'Starting container...'
-          sudo docker run -d --name simple-traffic --restart=always -p 8081:8080 \
-            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
-          
-          # Verify container is running
-          if sudo docker ps | grep -q simple-traffic; then
-            echo 'Container deployed and running successfully'
-          else
-            echo 'Error: Container failed to start'
-            sudo docker logs simple-traffic || true
-            exit 1
-          fi
-        "
-
+          --description "Allow HTTP/HTTPS and Go service to Traffic VM"
 
     - name: Cleanup
       run: rm -f startup-script.sh
