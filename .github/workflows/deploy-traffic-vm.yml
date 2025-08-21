@@ -144,44 +144,6 @@ jobs:
           sudo ln -sf \$NPM_GLOBAL_BIN/claude /usr/local/bin/claude
         "
 
-    - name: Setup Traffic Proxy Certificates
-      run: |
-        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
-        
-        # Setup traffic proxy on VM
-        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
-          # Create traffic user
-          sudo useradd -m -s /bin/bash traffic || echo 'User already exists'
-          
-          # Create directories for logs and certificates
-          sudo mkdir -p /opt/traffic/{logs,certs}
-          sudo chown -R traffic:traffic /opt/traffic
-
-          # Generate traffic proxy certificates
-          sudo -u traffic mitmproxy --set confdir=/opt/traffic/certs &
-          TRAFFIC_PID=\$!
-
-          # Wait for certificates to be generated (max 10 minutes)
-          for i in {1..60}; do
-              if [ -f '/opt/traffic/certs/mitmproxy-ca-cert.pem' ]; then
-                  echo 'Certificates generated successfully'
-                  kill \$TRAFFIC_PID || true
-                  break
-              fi
-              echo 'Waiting for certificates... ('\$i'/60)'
-              sleep 10
-          done
-
-          # Check if we timed out
-          if [ ! -f '/opt/traffic/certs/mitmproxy-ca-cert.pem' ]; then
-              echo 'Error: Certificate generation timed out after 10 minutes'
-              exit 1
-          fi
-
-          # Install traffic CA certificate to system trust store
-          sudo cp /opt/traffic/certs/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca-cert.crt
-          sudo update-ca-certificates
-        "
 
     - name: Setup Traffic Scripts and Rules
       run: |
@@ -214,6 +176,15 @@ jobs:
         
         # Configure environment and start traffic proxy
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
+          set -e  # Exit on any error
+          
+          # Create traffic user
+          sudo useradd -m -s /bin/bash traffic || echo 'User already exists'
+          
+          # Create directories for logs and certificates
+          sudo mkdir -p /opt/traffic/{logs,certs}
+          sudo chown -R traffic:traffic /opt/traffic
+          
           # Configure NODE_EXTRA_CA_CERTS for Node.js applications
           echo 'NODE_EXTRA_CA_CERTS=/opt/traffic/certs/mitmproxy-ca-cert.pem' | sudo tee -a /etc/environment
           
@@ -235,6 +206,17 @@ jobs:
           # Final check
           if ! pgrep -f mitmdump > /dev/null; then
             echo 'Error: Traffic proxy failed to start after 60 seconds'
+            exit 1
+          fi
+          
+          # Install certificates after proxy starts (certs are generated on startup)
+          echo 'Installing traffic CA certificate to system trust store...'
+          if [ -f '/opt/traffic/certs/mitmproxy-ca-cert.pem' ]; then
+            sudo cp /opt/traffic/certs/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca-cert.crt
+            sudo update-ca-certificates
+            echo 'Certificates installed successfully'
+          else
+            echo 'Error: Certificate file not found - proxy may not have started properly'
             exit 1
           fi
         "
