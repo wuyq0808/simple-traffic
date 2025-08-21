@@ -60,63 +60,134 @@ jobs:
       with:
         credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
+    - name: Delete and Create Traffic VM
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
+        MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-micro' }}"
+        
+        # Always delete existing instance if it exists
+        if gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; then
+          echo "Deleting existing instance"
+          gcloud compute instances delete $VM_NAME --zone=${{ env.ZONE }} --quiet || echo "Delete failed, instance may already be gone"
+          
+          # Wait for deletion to complete
+          echo "Waiting for deletion to complete..."
+          while gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; do
+            echo "Still deleting..."
+            sleep 5
+          done
+          echo "Instance deleted successfully"
+        else
+          echo "No existing instance found, proceeding with creation"
+        fi
+        
+        # Create VM
+        echo "Creating new Traffic VM: $VM_NAME"
+        gcloud compute instances create $VM_NAME \
+          --zone=${{ env.ZONE }} \
+          --machine-type=$MACHINE_TYPE \
+          --image-family=ubuntu-2204-lts \
+          --image-project=ubuntu-os-cloud \
+          --boot-disk-size=50GB \
+          --boot-disk-type=pd-standard \
+          --tags=traffic-vm,http-server,https-server \
+          --scopes=https://www.googleapis.com/auth/cloud-platform
+        
+        # Wait and verify VM is ready
+        echo "Waiting for VM to be ready..."
+        for i in {1..12}; do
+          if gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="echo 'VM ready'" >/dev/null 2>&1; then
+            echo "VM is ready and SSH accessible"
+            break
+          fi
+          echo "Waiting for SSH... ($i/12)"
+          sleep 10
+        done
+        
+        # Final check
+        if ! gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="echo 'VM ready'" >/dev/null 2>&1; then
+          echo "Error: VM not ready after 2 minutes"
+          exit 1
+        fi
+
+    - name: Install Dependencies on VM
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
+        
+        # Wait for VM to be ready
+        sleep 30
+        
+        # Install all dependencies
+        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
+          # Update system
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip curl wget jq docker.io
+          
+          # Start Docker
+          sudo systemctl start docker
+          sudo systemctl enable docker
+          
+          # Install Node.js 18.x
+          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -
+          sudo apt-get install -y nodejs
+          
+          # Install mitmproxy
+          sudo pip3 install mitmproxy
+          
+          # Install Claude Code CLI
+          echo 'Installing Claude Code CLI...'
+          sudo npm install -g @anthropic-ai/claude-code
+          
+          # Add npm global bin to PATH
+          NPM_GLOBAL_BIN=\$(npm config get prefix)/bin
+          echo 'export PATH=\$PATH:'\$NPM_GLOBAL_BIN | sudo tee -a /etc/profile
+          sudo ln -sf \$NPM_GLOBAL_BIN/claude /usr/local/bin/claude
+        "
+
+    - name: Setup Traffic Proxy Certificates
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
+        
+        # Setup traffic proxy on VM
+        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
+          # Create traffic user
+          sudo useradd -m -s /bin/bash traffic || echo 'User already exists'
+          
+          # Create directories for logs and certificates
+          sudo mkdir -p /opt/traffic/{logs,certs}
+          sudo chown -R traffic:traffic /opt/traffic
+
+          # Generate traffic proxy certificates
+          sudo -u traffic mitmproxy --set confdir=/opt/traffic/certs &
+          TRAFFIC_PID=\$!
+
+          # Wait for certificates to be generated (max 10 minutes)
+          for i in {1..60}; do
+              if [ -f '/opt/traffic/certs/mitmproxy-ca-cert.pem' ]; then
+                  echo 'Certificates generated successfully'
+                  kill \$TRAFFIC_PID || true
+                  break
+              fi
+              echo 'Waiting for certificates... ('\$i'/60)'
+              sleep 10
+          done
+
+          # Check if we timed out
+          if [ ! -f '/opt/traffic/certs/mitmproxy-ca-cert.pem' ]; then
+              echo 'Error: Certificate generation timed out after 10 minutes'
+              exit 1
+          fi
+
+          # Install traffic CA certificate to system trust store
+          sudo cp /opt/traffic/certs/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca-cert.crt
+          sudo update-ca-certificates
+        "
+
     - name: Create startup script
       run: |
         cat > startup-script.sh << 'EOF'
         #!/bin/bash
         set -e
-
-        # Update system
-        apt-get update
-        apt-get install -y python3 python3-pip curl wget jq
-        
-        # Install Node.js 18.x (required for Claude Code CLI)
-        curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-        apt-get install -y nodejs
-
-        # Install mitmproxy
-        pip3 install mitmproxy
-
-        # Install Claude Code CLI
-        echo "Installing Claude Code CLI..."
-        npm install -g @anthropic-ai/claude-code
-        
-        # Add npm global bin to PATH and create symlink
-        NPM_GLOBAL_BIN=$(npm config get prefix)/bin
-        echo "export PATH=\$PATH:$NPM_GLOBAL_BIN" >> /etc/profile
-        ln -sf $NPM_GLOBAL_BIN/claude /usr/local/bin/claude
-        
-        # Create traffic user
-        useradd -m -s /bin/bash traffic
-        
-        # Create directories for logs and certificates
-        mkdir -p /opt/traffic/{logs,certs}
-        chown -R traffic:traffic /opt/traffic
-
-        # Generate traffic proxy certificates
-        sudo -u traffic mitmproxy --set confdir=/opt/traffic/certs &
-        TRAFFIC_PID=$!
-
-        # Wait for certificates to be generated (max 10 minutes)
-        for i in {1..60}; do
-            if [ -f "/opt/traffic/certs/mitmproxy-ca-cert.pem" ]; then
-                echo "Certificates generated successfully"
-                kill $TRAFFIC_PID || true
-                break
-            fi
-            echo "Waiting for certificates... ($i/60)"
-            sleep 10
-        done
-
-        # Check if we timed out
-        if [ ! -f "/opt/traffic/certs/mitmproxy-ca-cert.pem" ]; then
-            echo "Error: Certificate generation timed out after 10 minutes"
-            exit 1
-        fi
-
-        # Install traffic CA certificate to system trust store
-        cp /opt/traffic/certs/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca-cert.crt
-        update-ca-certificates
 
         # Create traffic proxy script
         cat > /opt/traffic/traffic_script.py << 'SCRIPT_EOF'
@@ -216,39 +287,6 @@ jobs:
 
         chmod +x startup-script.sh
 
-    - name: Delete and Recreate Traffic VM
-      run: |
-        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
-        MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-micro' }}"
-        
-        # Always delete existing instance if it exists
-        if gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; then
-          echo "Deleting existing instance"
-          gcloud compute instances delete $VM_NAME --zone=${{ env.ZONE }} --quiet || echo "Delete failed, instance may already be gone"
-          
-          # Wait for deletion to complete
-          echo "Waiting for deletion to complete..."
-          while gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; do
-            echo "Still deleting..."
-            sleep 5
-          done
-          echo "Instance deleted successfully"
-        else
-          echo "No existing instance found, proceeding with creation"
-        fi
-        
-        # Create new instance
-        echo "Creating new Traffic VM: $VM_NAME"
-        gcloud compute instances create $VM_NAME \
-          --zone=${{ env.ZONE }} \
-          --machine-type=$MACHINE_TYPE \
-          --image-family=ubuntu-2204-lts \
-          --image-project=ubuntu-os-cloud \
-          --boot-disk-size=50GB \
-          --boot-disk-type=pd-standard \
-          --tags=traffic-vm,http-server,https-server \
-          --metadata-from-file startup-script=startup-script.sh \
-          --scopes=https://www.googleapis.com/auth/cloud-platform
 
     - name: Create firewall rules
       run: |
