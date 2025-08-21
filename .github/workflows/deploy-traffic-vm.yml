@@ -1,10 +1,12 @@
-name: Deploy Traffic VM
+name: Deploy Traffic Infrastructure
 
 on:
   push:
     branches: [ main ]
     paths:
       - '.github/workflows/deploy-traffic-vm.yml'
+      - 'cmd/**'
+      - 'internal/**'
   workflow_dispatch:
     inputs:
       vm_name:
@@ -18,10 +20,33 @@ on:
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE: simple-traffic
   REGION: us-central1
   ZONE: us-central1-a
 
 jobs:
+  build-and-deploy-container:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Google Auth
+      id: auth
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+    - name: Build and Push to Artifact Registry
+      run: |-
+        docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }} ./
+        docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
+
+
   deploy-traffic-vm:
     runs-on: ubuntu-latest
 
@@ -241,11 +266,42 @@ jobs:
           --target-tags traffic-vm \
           --description "Allow HTTP/HTTPS to Traffic VM" || echo "Firewall rule already exists"
 
-    - name: Get VM Information
-      run: |
+    - name: Deploy Container to Traffic VM
+      run: |-
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
-        echo "VM Details:"
-        gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format="table(name,status,machineType.basename(),networkInterfaces[0].accessConfigs[0].natIP:label=EXTERNAL_IP)"
+        
+        # Wait for VM to be fully ready
+        echo "Waiting for VM to be ready..."
+        sleep 30
+        
+        # Deploy container to the traffic VM
+        echo "Deploying Go service container to $VM_NAME"
+        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
+          # Install Docker if not present
+          if ! command -v docker &> /dev/null; then
+            echo 'Installing Docker...'
+            sudo apt-get update
+            sudo apt-get install -y docker.io
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker \$USER
+          fi
+          
+          # Configure Docker for Artifact Registry
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+          
+          # Stop any existing container
+          sudo docker stop simple-traffic || true
+          sudo docker rm simple-traffic || true
+          
+          # Pull and run new container
+          sudo docker pull ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
+          sudo docker run -d --name simple-traffic --restart=always -p 8081:8080 \
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
+          
+          echo 'Container deployed successfully'
+        "
+
 
     - name: Cleanup
       run: rm -f startup-script.sh
