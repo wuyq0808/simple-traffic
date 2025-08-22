@@ -154,13 +154,14 @@ jobs:
         
         # Deploy container to the traffic VM BEFORE setting up proxy
         echo "Deploying Go service container to $VM_NAME"
+        # Add user to docker group first
+        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="sudo usermod -aG docker \$USER"
+        
+        # Run deployment commands in a fresh SSH session
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
           set -e  # Exit on any error
           
-          # Add user to docker group for permissions
-          sudo usermod -aG docker \$USER
-          
-          # Configure Docker authentication and run container (all as user)
+          # Configure Docker authentication
           echo 'Configuring Docker authentication...'
           gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
           
