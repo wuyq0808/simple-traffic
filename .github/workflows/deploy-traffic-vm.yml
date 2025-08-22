@@ -49,6 +49,7 @@ jobs:
 
   deploy-traffic-vm:
     runs-on: ubuntu-latest
+    needs: build-and-deploy-container
 
     steps:
     - name: Checkout
