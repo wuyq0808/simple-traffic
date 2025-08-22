@@ -145,6 +145,12 @@ jobs:
       run: |-
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         
+        # Create service account key file locally
+        echo '${{ secrets.GCP_SA_KEY }}' > /tmp/sa-key.json
+        
+        # Copy service account key to VM
+        gcloud compute scp /tmp/sa-key.json $VM_NAME:/tmp/service-account-key.json --zone=${{ env.ZONE }}
+        
         # Deploy container to the traffic VM BEFORE setting up proxy
         echo "Deploying Go service container to $VM_NAME"
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
@@ -152,9 +158,6 @@ jobs:
           
           # Authenticate with service account for Docker
           echo 'Configuring Docker authentication...'
-          
-          # Create temporary service account key file
-          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/service-account-key.json
           
           # Activate service account on VM
           gcloud auth activate-service-account --key-file=/tmp/service-account-key.json
@@ -180,6 +183,9 @@ jobs:
             exit 1
           fi
         "
+        
+        # Clean up local key file
+        rm -f /tmp/sa-key.json
 
     - name: Setup Traffic Scripts and Rules
       run: |
