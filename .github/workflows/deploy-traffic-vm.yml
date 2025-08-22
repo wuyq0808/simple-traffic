@@ -157,30 +157,31 @@ jobs:
         gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
           set -e  # Exit on any error
           
-          # Authenticate with service account for Docker
-          echo 'Configuring Docker authentication...'
+          # Add user to docker group for permissions
+          sudo usermod -aG docker \$USER
           
-          # Activate service account on VM
-          gcloud auth activate-service-account --key-file=/tmp/service-account-key.json
+          # Configure Docker authentication and run container (all as user)
+          echo 'Configuring Docker authentication...'
           gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
           
-          # Clean up key file
-          rm -f /tmp/service-account-key.json
-          
-          # Pull and run new container
+          # Pull container image
           echo 'Pulling container image...'
-          sudo docker pull ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
+          docker pull ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
+          
+          # Stop any existing container
+          docker stop simple-traffic 2>/dev/null || echo 'No existing container to stop'
+          docker rm simple-traffic 2>/dev/null || echo 'No existing container to remove'
           
           echo 'Starting container...'
-          sudo docker run -d --name simple-traffic --restart=always -p 8081:8080 \
+          docker run -d --name simple-traffic --restart=always -p 8081:8080 \
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
           
           # Verify container is running
-          if sudo docker ps | grep -q simple-traffic; then
+          if docker ps | grep -q simple-traffic; then
             echo 'Container deployed and running successfully'
           else
             echo 'Error: Container failed to start'
-            sudo docker logs simple-traffic || true
+            docker logs simple-traffic || true
             exit 1
           fi
         "
