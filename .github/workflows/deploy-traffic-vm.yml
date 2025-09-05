@@ -7,9 +7,6 @@ on:
       - '.github/workflows/deploy-traffic-vm.yml'
       - 'cmd/**'
       - 'internal/**'
-    paths-ignore:
-      - '.github/workflows/snapshot-vm.yml'
-      - '.github/workflows/restore-vm-from-snapshot.yml'
   workflow_dispatch:
     inputs:
       vm_name:
