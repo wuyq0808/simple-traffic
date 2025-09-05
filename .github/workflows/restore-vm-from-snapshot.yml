@@ -142,9 +142,9 @@ jobs:
             fi
           fi
           
-          # Check if traffic proxy is running
-          if pgrep -f mitmdump > /dev/null; then
-            echo 'Traffic proxy is already running'
+          # Check if traffic proxy is running by checking port 8080
+          if sudo ss -tlnp | grep -q ':8080 '; then
+            echo 'Traffic proxy is already running on port 8080'
           else
             echo 'Starting traffic proxy...'
             # Configure environment variables
