@@ -149,12 +149,6 @@ jobs:
           echo 'TRAFFIC_LOGS_BUCKET=simple-relay-468808-api-responses-production' | sudo tee -a /etc/environment
           echo 'GOOGLE_APPLICATION_CREDENTIALS=/tmp/service-account-key.json' | sudo tee -a /etc/environment
           
-          # Kill any stale processes first (more aggressive cleanup)
-          echo 'Cleaning up any existing mitmdump processes...'
-          sudo pkill -9 -f mitmdump 2>/dev/null || echo 'No mitmdump processes to kill'
-          sudo pkill -9 -f start-proxy 2>/dev/null || echo 'No start-proxy processes to kill'
-          sleep 2
-          
           # Apply iptables rules for transparent proxy (missing from restore)
           echo 'Setting up iptables rules for transparent proxy...'
           sudo /opt/traffic/setup-iptables.sh
