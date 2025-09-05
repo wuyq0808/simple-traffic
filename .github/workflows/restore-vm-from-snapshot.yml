@@ -1,0 +1,235 @@
+name: Restore VM from Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_name:
+        description: 'Name of the snapshot to restore from'
+        required: true
+      vm_name:
+        description: 'Name for the new VM'
+        required: false
+        default: 'traffic-vm-restored'
+      machine_type:
+        description: 'Machine type for the VM'
+        required: false
+        default: 'e2-micro'
+      start_services:
+        description: 'Start traffic services after restoration'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE: simple-traffic
+  REGION: us-central1
+  ZONE: us-central1-a
+
+jobs:
+  restore-from-snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Google Auth
+      id: auth
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: Validate Snapshot Exists
+      run: |
+        SNAPSHOT_NAME="${{ github.event.inputs.snapshot_name }}"
+        echo "Validating snapshot: $SNAPSHOT_NAME"
+        
+        if ! gcloud compute snapshots describe $SNAPSHOT_NAME >/dev/null 2>&1; then
+          echo "Error: Snapshot $SNAPSHOT_NAME does not exist"
+          echo "Available snapshots:"
+          gcloud compute snapshots list --filter="name~'traffic-vm'" --sort-by="~creationTimestamp" --limit=10
+          exit 1
+        fi
+        
+        echo "Snapshot validated successfully"
+
+    - name: Create VM from Snapshot
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-micro' }}"
+        SNAPSHOT_NAME="${{ github.event.inputs.snapshot_name }}"
+        
+        echo "Creating VM: $VM_NAME from snapshot: $SNAPSHOT_NAME"
+        
+        # Delete existing VM if it exists
+        if gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; then
+          echo "Deleting existing VM: $VM_NAME"
+          gcloud compute instances delete $VM_NAME --zone=${{ env.ZONE }} --quiet
+          
+          # Wait for deletion to complete
+          echo "Waiting for deletion to complete..."
+          while gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} >/dev/null 2>&1; do
+            echo "Still deleting..."
+            sleep 5
+          done
+          echo "VM deleted successfully"
+        fi
+        
+        # Create VM from snapshot
+        echo "Creating VM from snapshot..."
+        gcloud compute instances create $VM_NAME \
+          --zone=${{ env.ZONE }} \
+          --machine-type=$MACHINE_TYPE \
+          --source-snapshot=$SNAPSHOT_NAME \
+          --boot-disk-size=50GB \
+          --boot-disk-type=pd-standard \
+          --tags=traffic-vm,http-server,https-server \
+          --scopes=https://www.googleapis.com/auth/cloud-platform
+        
+        # Wait for VM to be ready
+        echo "Waiting for VM to be ready..."
+        for i in {1..12}; do
+          if gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="echo 'VM ready'" >/dev/null 2>&1; then
+            echo "VM is ready and SSH accessible"
+            break
+          fi
+          echo "Waiting for SSH... ($i/12)"
+          sleep 10
+        done
+        
+        # Final check
+        if ! gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="echo 'VM ready'" >/dev/null 2>&1; then
+          echo "Error: VM not ready after 2 minutes"
+          exit 1
+        fi
+        
+        echo "VM restored successfully from snapshot"
+
+    - name: Start Traffic Services
+      if: ${{ github.event.inputs.start_services == 'true' }}
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        
+        echo "Starting traffic services on $VM_NAME..."
+        
+        # Create service account key file locally
+        echo '${{ secrets.GCP_SA_KEY }}' > /tmp/sa-key.json
+        
+        # Copy service account key to VM (if not already present)
+        gcloud compute scp /tmp/sa-key.json $VM_NAME:/tmp/service-account-key.json --zone=${{ env.ZONE }} || echo "Key may already exist"
+        
+        gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="
+          # Log all output to a file for debugging
+          exec > >(tee -a /tmp/service-startup.log) 2>&1
+          echo \"=== Service startup log started at \$(date) ===\"
+          
+          set -e  # Exit on any error
+          
+          echo 'Checking system status...'
+          sudo systemctl status docker --no-pager | head -3
+          
+          # Check if services are already running
+          if docker ps | grep -q simple-traffic; then
+            echo 'Go service container is already running'
+          else
+            echo 'Starting Go service container...'
+            # Get the latest image tag from the registry
+            LATEST_IMAGE=\$(gcloud container images list-tags ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }} --limit=1 --sort-by=~timestamp --format='get(tags[0])' 2>/dev/null || echo 'latest')
+            if [ -z \"\$LATEST_IMAGE\" ] || [ \"\$LATEST_IMAGE\" = \"latest\" ]; then
+              echo 'No specific image tag found, using latest available image...'
+              # Find any available image
+              AVAILABLE_IMAGE=\$(docker images --format 'table {{.Repository}}:{{.Tag}}' | grep simple-traffic | head -1 | awk '{print \$1}')
+              if [ -n \"\$AVAILABLE_IMAGE\" ]; then
+                echo \"Using existing image: \$AVAILABLE_IMAGE\"
+                docker run -d --name simple-traffic --restart=always -p 8081:8080 \$AVAILABLE_IMAGE
+              else
+                echo 'No container images found. Please deploy a new image first.'
+              fi
+            else
+              docker run -d --name simple-traffic --restart=always -p 8081:8080 \
+                ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:\$LATEST_IMAGE
+            fi
+          fi
+          
+          # Check if traffic proxy is running
+          if pgrep -f mitmdump > /dev/null; then
+            echo 'Traffic proxy is already running'
+          else
+            echo 'Starting traffic proxy...'
+            # Configure environment variables
+            echo 'GCP_PROJECT_ID=${{ env.PROJECT_ID }}' | sudo tee -a /etc/environment
+            echo 'TRAFFIC_LOGS_BUCKET=simple-relay-468808-api-responses-production' | sudo tee -a /etc/environment
+            echo 'GOOGLE_APPLICATION_CREDENTIALS=/tmp/service-account-key.json' | sudo tee -a /etc/environment
+            
+            # Start traffic proxy
+            nohup sudo /opt/traffic/start-proxy.sh > /tmp/traffic-startup.log 2>&1 &
+            
+            # Wait for proxy to start
+            echo 'Waiting for traffic proxy to start...'
+            for i in {1..12}; do
+              if pgrep -f mitmdump > /dev/null; then
+                echo 'Traffic proxy started successfully'
+                break
+              fi
+              echo \"Attempt \$i/12: Waiting 5 seconds...\"
+              sleep 5
+            done
+          fi
+          
+          # Final status check
+          echo 'Final service status:'
+          echo '- Docker container:' \$(docker ps | grep simple-traffic > /dev/null && echo 'RUNNING' || echo 'NOT RUNNING')
+          echo '- Traffic proxy:' \$(pgrep -f mitmdump > /dev/null && echo 'RUNNING' || echo 'NOT RUNNING')
+          
+          echo \"=== Service startup log completed at \$(date) ===\"
+        "
+        
+        # Clean up local key file
+        rm -f /tmp/sa-key.json
+
+    - name: Update Firewall Rules
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        
+        # Ensure firewall rules exist for the new VM
+        echo "Ensuring firewall rules are in place..."
+        
+        # Check and create SSH rule if needed
+        if ! gcloud compute firewall-rules describe allow-ssh-traffic >/dev/null 2>&1; then
+          echo "Creating SSH firewall rule..."
+          gcloud compute firewall-rules create allow-ssh-traffic \
+            --allow tcp:22 \
+            --source-ranges 0.0.0.0/0 \
+            --target-tags traffic-vm \
+            --description "Allow SSH to Traffic VM"
+        fi
+        
+        # Check and create HTTP/HTTPS rule if needed
+        if ! gcloud compute firewall-rules describe allow-http-https-traffic >/dev/null 2>&1; then
+          echo "Creating HTTP/HTTPS firewall rule..."
+          gcloud compute firewall-rules create allow-http-https-traffic \
+            --allow tcp:80,tcp:443,tcp:8080,tcp:8081 \
+            --source-ranges 0.0.0.0/0 \
+            --target-tags traffic-vm \
+            --description "Allow HTTP/HTTPS and Go service to Traffic VM"
+        fi
+
+    - name: Display VM Information
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        
+        echo "=== VM Restoration Complete ==="
+        echo "VM Name: $VM_NAME"
+        echo "Zone: ${{ env.ZONE }}"
+        echo "External IP: $(gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
+        echo "Machine Type: ${{ github.event.inputs.machine_type || 'e2-micro' }}"
+        echo "Source Snapshot: ${{ github.event.inputs.snapshot_name }}"
+        echo "Services Started: ${{ github.event.inputs.start_services }}"
+        
+        if [ "${{ github.event.inputs.start_services }}" = "true" ]; then
+          echo ""
+          echo "Services should be running on:"
+          echo "- Go HTTP Proxy: $(gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format='get(networkInterfaces[0].accessConfigs[0].natIP)'):8081"
+          echo "- Traffic Proxy: Internal on port 8080"
+        fi
