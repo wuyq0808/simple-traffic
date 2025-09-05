@@ -142,30 +142,29 @@ jobs:
             fi
           fi
           
-          # Check if traffic proxy is running by checking port 8080
-          if sudo ss -tlnp | grep -q ':8080 '; then
-            echo 'Traffic proxy is already running on port 8080'
-          else
-            echo 'Starting traffic proxy...'
-            # Configure environment variables
-            echo 'GCP_PROJECT_ID=${{ env.PROJECT_ID }}' | sudo tee -a /etc/environment
-            echo 'TRAFFIC_LOGS_BUCKET=simple-relay-468808-api-responses-production' | sudo tee -a /etc/environment
-            echo 'GOOGLE_APPLICATION_CREDENTIALS=/tmp/service-account-key.json' | sudo tee -a /etc/environment
-            
-            # Start traffic proxy
-            nohup sudo /opt/traffic/start-proxy.sh > /tmp/traffic-startup.log 2>&1 &
-            
-            # Wait for proxy to start
-            echo 'Waiting for traffic proxy to start...'
-            for i in {1..12}; do
-              if pgrep -f mitmdump > /dev/null; then
-                echo 'Traffic proxy started successfully'
-                break
-              fi
-              echo \"Attempt \$i/12: Waiting 5 seconds...\"
-              sleep 5
-            done
-          fi
+          # Always start traffic proxy (no auto-start configured in deployment)
+          echo 'Starting traffic proxy...'
+          # Configure environment variables
+          echo 'GCP_PROJECT_ID=${{ env.PROJECT_ID }}' | sudo tee -a /etc/environment
+          echo 'TRAFFIC_LOGS_BUCKET=simple-relay-468808-api-responses-production' | sudo tee -a /etc/environment
+          echo 'GOOGLE_APPLICATION_CREDENTIALS=/tmp/service-account-key.json' | sudo tee -a /etc/environment
+          
+          # Kill any stale processes first
+          sudo pkill -f mitmdump || echo 'No existing mitmdump processes'
+          
+          # Start traffic proxy
+          nohup sudo /opt/traffic/start-proxy.sh > /tmp/traffic-startup.log 2>&1 &
+          
+          # Wait for proxy to start
+          echo 'Waiting for traffic proxy to start...'
+          for i in {1..12}; do
+            if sudo ss -tlnp | grep -q ':8080 '; then
+              echo 'Traffic proxy started successfully on port 8080'
+              break
+            fi
+            echo \"Attempt \$i/12: Waiting 5 seconds...\"
+            sleep 5
+          done
           
           # Final status check
           echo 'Final service status:'
