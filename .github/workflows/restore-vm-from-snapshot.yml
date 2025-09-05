@@ -152,6 +152,10 @@ jobs:
           # Kill any stale processes first
           sudo pkill -f mitmdump || echo 'No existing mitmdump processes'
           
+          # Apply iptables rules for transparent proxy (missing from restore)
+          echo 'Setting up iptables rules for transparent proxy...'
+          sudo /opt/traffic/setup-iptables.sh
+          
           # Start traffic proxy in background
           echo 'Starting traffic proxy...'
           nohup sudo /opt/traffic/start-proxy.sh > /tmp/traffic-startup.log 2>&1 &
