@@ -6,7 +6,7 @@ on:
       vm_name:
         description: 'Name for the new VM'
         required: false
-        default: 'traffic-vm-restored'
+        default: 'traffic-vm'
       machine_type:
         description: 'Machine type for the VM'
         required: false
@@ -48,7 +48,7 @@ jobs:
 
     - name: Create VM from Snapshot
       run: |
-        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-micro' }}"
         
         echo "Creating VM: $VM_NAME from snapshot: $SNAPSHOT_NAME"
@@ -99,7 +99,7 @@ jobs:
 
     - name: Start Traffic Services
       run: |
-        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         
         echo "Starting traffic services on $VM_NAME..."
         
@@ -180,7 +180,7 @@ jobs:
 
     - name: Update Firewall Rules
       run: |
-        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         
         # Ensure firewall rules exist for the new VM
         echo "Ensuring firewall rules are in place..."
@@ -207,7 +207,7 @@ jobs:
 
     - name: Display VM Information
       run: |
-        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
         
         echo "=== VM Restoration Complete ==="
         echo "VM Name: $VM_NAME"
