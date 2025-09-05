@@ -152,19 +152,26 @@ jobs:
           # Kill any stale processes first
           sudo pkill -f mitmdump || echo 'No existing mitmdump processes'
           
-          # Start traffic proxy
+          # Start traffic proxy in background
+          echo 'Starting traffic proxy...'
           nohup sudo /opt/traffic/start-proxy.sh > /tmp/traffic-startup.log 2>&1 &
           
-          # Wait for proxy to start
+          # Wait for proxy to start with retry loop
           echo 'Waiting for traffic proxy to start...'
           for i in {1..12}; do
-            if sudo ss -tlnp | grep -q ':8080 '; then
-              echo 'Traffic proxy started successfully on port 8080'
+            if pgrep -f mitmdump > /dev/null; then
+              echo 'Traffic proxy started successfully'
               break
             fi
             echo \"Attempt \$i/12: Waiting 5 seconds...\"
             sleep 5
           done
+          
+          # Final check
+          if ! pgrep -f mitmdump > /dev/null; then
+            echo 'Error: Traffic proxy failed to start after 60 seconds'
+            exit 1
+          fi
           
           # Final status check
           echo 'Final service status:'
