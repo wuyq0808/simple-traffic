@@ -3,9 +3,6 @@ name: Restore VM from Snapshot
 on:
   workflow_dispatch:
     inputs:
-      snapshot_name:
-        description: 'Name of the snapshot to restore from'
-        required: true
       vm_name:
         description: 'Name for the new VM'
         required: false
@@ -14,11 +11,6 @@ on:
         description: 'Machine type for the VM'
         required: false
         default: 'e2-micro'
-      start_services:
-        description: 'Start traffic services after restoration'
-        required: false
-        default: 'true'
-        type: boolean
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -40,25 +32,24 @@ jobs:
       with:
         credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-    - name: Validate Snapshot Exists
+    - name: Find Latest Snapshot
       run: |
-        SNAPSHOT_NAME="${{ github.event.inputs.snapshot_name }}"
-        echo "Validating snapshot: $SNAPSHOT_NAME"
+        SNAPSHOT_NAME=$(gcloud compute snapshots list --filter="name~'traffic-vm-snapshot'" --sort-by="~creationTimestamp" --limit=1 --format="get(name)")
         
-        if ! gcloud compute snapshots describe $SNAPSHOT_NAME >/dev/null 2>&1; then
-          echo "Error: Snapshot $SNAPSHOT_NAME does not exist"
+        if [ -z "$SNAPSHOT_NAME" ]; then
+          echo "Error: No traffic-vm snapshots found"
           echo "Available snapshots:"
           gcloud compute snapshots list --filter="name~'traffic-vm'" --sort-by="~creationTimestamp" --limit=10
           exit 1
         fi
         
-        echo "Snapshot validated successfully"
+        echo "Using latest snapshot: $SNAPSHOT_NAME"
+        echo "SNAPSHOT_NAME=$SNAPSHOT_NAME" >> $GITHUB_ENV
 
     - name: Create VM from Snapshot
       run: |
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
         MACHINE_TYPE="${{ github.event.inputs.machine_type || 'e2-micro' }}"
-        SNAPSHOT_NAME="${{ github.event.inputs.snapshot_name }}"
         
         echo "Creating VM: $VM_NAME from snapshot: $SNAPSHOT_NAME"
         
@@ -107,7 +98,6 @@ jobs:
         echo "VM restored successfully from snapshot"
 
     - name: Start Traffic Services
-      if: ${{ github.event.inputs.start_services == 'true' }}
       run: |
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm-restored' }}"
         
@@ -224,12 +214,9 @@ jobs:
         echo "Zone: ${{ env.ZONE }}"
         echo "External IP: $(gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
         echo "Machine Type: ${{ github.event.inputs.machine_type || 'e2-micro' }}"
-        echo "Source Snapshot: ${{ github.event.inputs.snapshot_name }}"
-        echo "Services Started: ${{ github.event.inputs.start_services }}"
-        
-        if [ "${{ github.event.inputs.start_services }}" = "true" ]; then
-          echo ""
-          echo "Services should be running on:"
-          echo "- Go HTTP Proxy: $(gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format='get(networkInterfaces[0].accessConfigs[0].natIP)'):8081"
-          echo "- Traffic Proxy: Internal on port 8080"
-        fi
+        echo "Source Snapshot: $SNAPSHOT_NAME"
+        echo "Services Started: Yes"
+        echo ""
+        echo "Services should be running on:"
+        echo "- Go HTTP Proxy: $(gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format='get(networkInterfaces[0].accessConfigs[0].natIP)'):8081"
+        echo "- Traffic Proxy: Internal on port 8080"
