@@ -142,6 +142,56 @@ jobs:
           sudo ln -sf \$NPM_GLOBAL_BIN/claude /usr/local/bin/claude
         "
 
+    - name: Create Clean Dependencies Snapshot
+      run: |
+        VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        SNAPSHOT_NAME="traffic-vm-clean-deps-${TIMESTAMP}"
+        
+        echo "Creating clean snapshot after dependencies installation: $SNAPSHOT_NAME"
+        
+        # Stop VM for consistent snapshot
+        echo "Stopping VM for snapshot..."
+        gcloud compute instances stop $VM_NAME --zone=${{ env.ZONE }} --quiet
+        
+        # Wait for VM to stop
+        while true; do
+          STATUS=$(gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format='get(status)')
+          if [ "$STATUS" = "TERMINATED" ]; then
+            echo "VM stopped successfully"
+            break
+          fi
+          echo "VM status: $STATUS, waiting..."
+          sleep 5
+        done
+        
+        # Create snapshot of the boot disk
+        echo "Creating snapshot..."
+        BOOT_DISK=$(gcloud compute instances describe $VM_NAME --zone=${{ env.ZONE }} --format='get(disks[0].source)')
+        DISK_NAME=$(basename $BOOT_DISK)
+        
+        gcloud compute disks snapshot $DISK_NAME \
+          --zone=${{ env.ZONE }} \
+          --snapshot-names=$SNAPSHOT_NAME \
+          --description="Clean VM snapshot with dependencies after deploy workflow - $(date)"
+        
+        echo "Snapshot created: $SNAPSHOT_NAME"
+        
+        # Restart VM
+        echo "Restarting VM..."
+        gcloud compute instances start $VM_NAME --zone=${{ env.ZONE }} --quiet
+        
+        # Wait for VM to be ready
+        echo "Waiting for VM to be ready..."
+        for i in {1..12}; do
+          if gcloud compute ssh $VM_NAME --zone=${{ env.ZONE }} --command="echo 'VM ready'" >/dev/null 2>&1; then
+            echo "VM is ready and SSH accessible"
+            break
+          fi
+          echo "Waiting for SSH... ($i/12)"
+          sleep 10
+        done
+
     - name: Deploy Container to Traffic VM
       run: |-
         VM_NAME="${{ github.event.inputs.vm_name || 'traffic-vm' }}"
