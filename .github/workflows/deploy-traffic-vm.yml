@@ -1,4 +1,4 @@
-name: Deploy Traffic Infrastructure
+name: Deploy from Scratch
 
 on:
   push:
