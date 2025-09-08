@@ -24,7 +24,7 @@ gsutil ls gs://simple-relay-468808-api-responses-production/
 
 ### GCS Traffic Logs
 - **Bucket:** `simple-relay-468808-api-responses-production` (configured in traffic_script.py)
-- **Status:** Bucket does not exist (404 error)
+- **Status:** Active with OAuth token logs captured
 - **Note:** Traffic proxy uploads intercepted requests to this bucket
 
 ## GitHub Actions
@@ -36,3 +36,10 @@ gsutil ls gs://simple-relay-468808-api-responses-production/
 ### Auto-Deploy Workflow  
 - **`deploy-traffic-vm.yml`** - Deploys on pushes to Go code (`cmd/**`, `internal/**`)
   - Ignores snapshot/restore workflow changes
+
+## OAuth Token Extraction
+
+**Script:** `python3 scripts/extract_oauth_tokens.py`  
+**Output:** `oauth_token_details.txt` with complete OAuth flow details  
+**Requirements:** Python 3.6+, gsutil configured  
+**Note:** Scripts folder won't trigger GitHub workflows

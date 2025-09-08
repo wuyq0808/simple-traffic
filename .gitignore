@@ -4,3 +4,6 @@ simple-traffic
 *.dll
 *.so
 *.dylib
+
+# OAuth extraction output
+oauth_token_details.txt
