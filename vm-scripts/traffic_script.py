@@ -29,16 +29,18 @@ class TrafficLogger:
             self.gcs_client = None
             self.bucket = None
 
-    def upload_to_gcs(self, log_entry):
+    def upload_to_gcs(self, log_entry, host):
         """Upload single log entry directly to GCS"""
         if not self.bucket:
             return
             
         try:
-            # Create unique blob name
+            # Create unique blob name with host folder
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             unique_id = str(uuid.uuid4())[:8]
-            blob_name = f"traffic-logs/{timestamp}_{unique_id}_{log_entry['type']}.json"
+            # Sanitize host for use as folder name (replace special chars)
+            safe_host = host.replace(':', '_').replace('/', '_')
+            blob_name = f"traffic-logs/{safe_host}/{timestamp}_{unique_id}_{log_entry['type']}.json"
             
             blob = self.bucket.blob(blob_name)
             
@@ -82,7 +84,9 @@ class TrafficLogger:
             "content": flow.request.content.decode('utf-8', errors='ignore') if flow.request.content else ""
         }
         
-        self.upload_to_gcs(log_entry)
+        # Extract host from the request
+        host = flow.request.host
+        self.upload_to_gcs(log_entry, host)
 
     def response(self, flow: http.HTTPFlow) -> None:
         # Check if this response should be excluded
@@ -98,7 +102,9 @@ class TrafficLogger:
             "content": flow.response.content.decode('utf-8', errors='ignore') if flow.response.content else ""
         }
         
-        self.upload_to_gcs(log_entry)
+        # Extract host from the request
+        host = flow.request.host
+        self.upload_to_gcs(log_entry, host)
 
 # Register the addon
 addons = [TrafficLogger()]
