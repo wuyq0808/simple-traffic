@@ -1,9 +1,6 @@
-traffic.jsonl
-simple-traffic
 *.exe
 *.dll
 *.so
 *.dylib
 
-# OAuth extraction output
-oauth_token_details.txt
+*_logs/
